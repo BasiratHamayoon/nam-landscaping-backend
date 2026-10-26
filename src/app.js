@@ -2,80 +2,84 @@ import express from "express"
 import cors from "cors"
 import cookieParser from "cookie-parser"
 import helmet from "helmet"
-import morgan from "morgan"
-import compression from "compression"
 import mongoSanitize from "express-mongo-sanitize"
 import hpp from "hpp"
-
-import { env } from "./config/env.js"
-import { globalLimiter } from "./middlewares/rateLimit.middleware.js"
-import { errorHandler, notFoundHandler } from "./middlewares/error.middleware.js"
 import indexRouter from "./routes/index.js"
+import { errorHandler } from "./middlewares/error.middleware.js"
 
 const app = express()
 
-// Trust proxy (Required for Vercel deployment so rate-limiters get the real IP)
-app.set("trust proxy", 1)
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:3002",
+  "http://127.0.0.1:3000",
+  process.env.CORS_ORIGIN,
+  process.env.ADMIN_PANEL_URL,
+  process.env.FRONTEND_URL,
+].filter(Boolean)
 
-// Security HTTP Headers
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    
+    if (
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("http://127.0.0.1:") ||
+      allowedOrigins.includes(origin)
+    ) {
+      return callback(null, true)
+    }
+
+    return callback(null, true)
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Access-Control-Allow-Origin",
+    "Access-Control-Allow-Credentials",
+  ],
+  optionsSuccessStatus: 200,
+}
+
+app.use(cors(corsOptions))
+app.options("*", cors(corsOptions))
+
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
-    contentSecurityPolicy: env.NODE_ENV === "production" ? undefined : false,
   })
 )
 
-// CORS Configuration
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin or matching our whitelist
-      if (!origin || env.CORS_ORIGIN.includes(origin) || env.CORS_ORIGIN.includes("*")) {
-        callback(null, true)
-      } else {
-        callback(new Error("Not allowed by CORS"))
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
-)
-
-// Body parsers
-app.use(express.json({ limit: "10mb" }))
-app.use(express.urlencoded({ extended: true, limit: "10mb" }))
+app.use(express.json({ limit: "20mb" }))
+app.use(express.urlencoded({ extended: true, limit: "20mb" }))
 app.use(cookieParser())
-
-// Optimization & Security plugins
-app.use(compression())
 app.use(mongoSanitize())
 app.use(hpp())
 
-// Logging (Only in development)
-if (env.NODE_ENV === "development") {
-  app.use(morgan("dev"))
-}
-
-// Global rate limiting
-app.use(globalLimiter)
-
-// ==========================================
-// Root Welcome Route (Fixes the Vercel 404)
-// ==========================================
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "🌿 Welcome to NAM Landscaping API",
+    message: "NAM Landscaping API Running Successfully",
     healthCheck: "/api/v1/health",
     version: "1.0.0",
   })
 })
 
-// Main API Routes
 app.use("/api/v1", indexRouter)
 
-// Unmatched routes and Error Handling
-app.use(notFoundHandler)
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.originalUrl} not found`,
+  })
+})
+
 app.use(errorHandler)
 
 export default app
